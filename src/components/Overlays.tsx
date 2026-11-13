@@ -32,7 +32,8 @@ const SHORTCUTS: [string, string, string][] = [
   ["0 / 1", "—", "Fit / 100%"],
   ["C", "Crop", "Crop"],
   ["A", "Adjust colours", "Adjust colours"],
-  ["R", "—", "Rotate (view only)"],
+  ["E", "Export a resized copy", "Export a resized copy"],
+  ["R / Shift+R", "—", "Rotate the view (Save rotation… keeps it)"],
   ["I", "—", "Toggle info"],
   ["F", "—", "Full screen"],
   ["⌫", "Move to Trash", "Move to Trash"],
@@ -44,12 +45,14 @@ const SHORTCUTS: [string, string, string][] = [
 ];
 
 const EDITOR_SHORTCUTS: [string, string][] = [
-  ["C / A", "Switch to Crop / Adjust"],
+  ["R / C / A", "Switch to Rotate / Crop / Adjust"],
+  ["← → / H / V", "Rotate: turn left / right, flip horizontal / vertical"],
   ["Drag", "Move or resize the crop box; drag outside it to draw a new one"],
   ["← → ↑ ↓", "Crop: nudge the box (Shift: 10 px). Adjust: change the focused slider (Shift: 10)"],
   ["Tab", "Adjust: move to the next slider"],
   ["Double-click", "Adjust: reset a slider to 0"],
   [`${modKey}S`, "Save as copy"],
+  ["E", "Export a resized copy, with these edits"],
   ["Esc", "Cancel editing"],
 ];
 

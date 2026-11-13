@@ -37,35 +37,64 @@ pub enum SaveMode {
 }
 
 pub fn save(image: &DynamicImage, source: &LoadedImage, original: &Path, mode: SaveMode) -> AppResult<PathBuf> {
-    let dir = original
+    // Replacing would silently change the file's format (run_edit checks this too).
+    if source.from_heic && matches!(mode, SaveMode::Replace) {
+        return Err(AppError::InvalidEdit(super::HEIC_REPLACE.into()));
+    }
+    // HEIC can't be written back, so its edits become "<name> (edited).jpg".
+    let ext = source.from_heic.then_some("jpg");
+    save_with(original, mode, ext, |tmp| write_encoded(image, source, tmp))
+}
+
+/// Like `save`, for a file that is already encoded (lossless rotation).
+pub fn save_bytes(bytes: &[u8], original: &Path, mode: SaveMode) -> AppResult<PathBuf> {
+    save_with(original, mode, None, |tmp| write_bytes(tmp, bytes))
+}
+
+/// Writes `dest` via a temp file next to it, then renames it into place
+/// (replacing an existing file, which the Save dialog already confirmed).
+pub fn write_atomically(dest: &Path, write: impl FnOnce(&Path) -> AppResult<()>) -> AppResult<()> {
+    let tmp = temp_path(dest, "export-tmp")?;
+    if let Err(e) = write(&tmp).and_then(|()| fs::rename(&tmp, dest).map_err(AppError::from)) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
+}
+
+fn temp_path(next_to: &Path, tag: &str) -> AppResult<PathBuf> {
+    let dir = next_to
         .parent()
         .ok_or_else(|| AppError::Other("Image has no parent folder".into()))?;
-    let file_name = original
+    let file_name = next_to
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let tmp = dir.join(format!(".{file_name}.{}.edit-tmp", std::process::id()));
+    Ok(dir.join(format!(".{file_name}.{}.{tag}", std::process::id())))
+}
 
-    if let Err(e) = write_encoded(image, source, &tmp) {
+fn save_with(
+    original: &Path,
+    mode: SaveMode,
+    ext: Option<&str>,
+    write: impl FnOnce(&Path) -> AppResult<()>,
+) -> AppResult<PathBuf> {
+    let tmp = temp_path(original, "edit-tmp")?;
+
+    if let Err(e) = write(&tmp) {
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }
 
     match mode {
         SaveMode::NewFile => {
-            // HEIC can't be written back, so its edits become "<name> (edited).jpg".
-            let dest = unique_edited_path(original, source.from_heic.then_some("jpg"));
+            let dest = unique_edited_path(original, ext);
             fs::rename(&tmp, &dest).inspect_err(|_| {
                 let _ = fs::remove_file(&tmp);
             })?;
             Ok(dest)
         }
         SaveMode::Replace => {
-            // Replacing would silently change the file's format (run_edit checks this too).
-            if source.from_heic {
-                let _ = fs::remove_file(&tmp);
-                return Err(AppError::InvalidEdit(super::HEIC_REPLACE.into()));
-            }
             // Trash first: if that fails, the original is still in place.
             if let Err(e) = trash::delete(original) {
                 let _ = fs::remove_file(&tmp);
@@ -81,6 +110,13 @@ pub fn save(image: &DynamicImage, source: &LoadedImage, original: &Path, mode: S
             Ok(original.to_path_buf())
         }
     }
+}
+
+fn write_bytes(path: &Path, bytes: &[u8]) -> AppResult<()> {
+    let mut f = fs::File::create(path)?;
+    f.write_all(bytes)?;
+    f.sync_all()?; // on disk before we rename / trash
+    Ok(())
 }
 
 /// Encode in the original's format, carrying over its colour profile and EXIF.
@@ -99,13 +135,23 @@ fn write_encoded(image: &DynamicImage, source: &LoadedImage, path: &Path) -> App
     Ok(())
 }
 
-fn encode<E: ImageEncoder>(image: &DynamicImage, source: &LoadedImage, mut encoder: E) -> AppResult<()> {
+fn encode<E: ImageEncoder>(image: &DynamicImage, source: &LoadedImage, encoder: E) -> AppResult<()> {
+    encode_with(image, source.icc_profile.as_deref(), source.exif.as_deref(), encoder)
+}
+
+/// Encodes with the given colour profile and EXIF (export chooses which to keep).
+pub fn encode_with<E: ImageEncoder>(
+    image: &DynamicImage,
+    icc: Option<&[u8]>,
+    exif: Option<&[u8]>,
+    mut encoder: E,
+) -> AppResult<()> {
     // Not every format can store every kind of metadata; skipping it is fine.
-    if let Some(icc) = &source.icc_profile {
-        let _ = encoder.set_icc_profile(icc.clone());
+    if let Some(icc) = icc {
+        let _ = encoder.set_icc_profile(icc.to_vec());
     }
-    if let Some(exif) = &source.exif {
-        let _ = encoder.set_exif_metadata(exif.clone());
+    if let Some(exif) = exif {
+        let _ = encoder.set_exif_metadata(exif.to_vec());
     }
     // write_with_encoder converts colour types the format can't store (e.g. RGBA → RGB for JPEG).
     image.write_with_encoder(encoder)?;

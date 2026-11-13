@@ -14,11 +14,16 @@
 //!
 //! Nothing else (loading, metadata, saving, the command) needs to change.
 //! Colour adjustments share `color.rs`; see `adjust.rs` for adding a slider.
+//!
+//! One special case: a JPEG that is only rotated / flipped isn't re-encoded at
+//! all. Its EXIF orientation flag is changed instead (`lossless.rs`).
 
 mod adjust;
 mod color;
 mod crop;
-mod output;
+mod lossless;
+pub(crate) mod output;
+mod rotate;
 
 use std::path::PathBuf;
 
@@ -36,6 +41,7 @@ use crate::{
 pub use adjust::Adjust;
 pub use crop::Crop;
 pub use output::SaveMode;
+pub use rotate::Rotate;
 
 /// One step of an edit. Every operation takes an image and returns a new one.
 pub trait Operation {
@@ -47,6 +53,7 @@ pub trait Operation {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum EditOp {
+    Rotate(Rotate),
     Crop(Crop),
     Adjust(Adjust),
 }
@@ -54,10 +61,19 @@ pub enum EditOp {
 impl EditOp {
     fn operation(&self) -> &dyn Operation {
         match self {
+            EditOp::Rotate(op) => op,
             EditOp::Crop(op) => op,
             EditOp::Adjust(op) => op,
         }
     }
+}
+
+/// When every operation is a rotation, their combined effect (else None).
+fn only_rotation(ops: &[EditOp]) -> Option<Rotate> {
+    ops.iter().try_fold(Rotate::NONE, |acc, op| match op {
+        EditOp::Rotate(r) if r.validate().is_ok() => Some(r.after(acc)),
+        _ => None,
+    })
 }
 
 /// Runs every operation in order.
@@ -90,6 +106,15 @@ pub fn run_edit(path: PathBuf, ops: &[EditOp], mode: SaveMode) -> AppResult<Edit
     // JPEG copy. Checked before the (slow) decode.
     if heic::is_heic(&path) && matches!(mode, SaveMode::Replace) {
         return Err(AppError::InvalidEdit(HEIC_REPLACE.into()));
+    }
+    // Rotating a JPEG: change its orientation flag, keep the compressed pixels.
+    let rotated = match only_rotation(ops).filter(|r| !r.is_none() && !heic::is_heic(&path)) {
+        Some(rotate) => lossless::reorient_jpeg(&std::fs::read(&path)?, rotate),
+        None => None,
+    };
+    if let Some(bytes) = rotated {
+        let dest = output::save_bytes(&bytes, &path, mode)?;
+        return Ok(EditResult { entry: library::entry_for(&dest)?, replaced: matches!(mode, SaveMode::Replace) });
     }
     let loaded = imaging::open_oriented(&path)?;
     if !is_editable(loaded.format) {
@@ -139,6 +164,10 @@ mod tests {
             serde_json::from_str(r#"[{ "type": "adjust", "brightness": 10, "saturation": -5 }]"#).unwrap();
         let want = Adjust { brightness: 10, saturation: -5, ..Default::default() };
         assert!(matches!(&ops[0], EditOp::Adjust(a) if *a == want));
+
+        let ops: Vec<EditOp> =
+            serde_json::from_str(r#"[{ "type": "rotate", "quarterTurns": 3, "flip": true }]"#).unwrap();
+        assert!(matches!(&ops[0], EditOp::Rotate(r) if *r == Rotate { quarter_turns: 3, flip: true }));
 
         let mode: SaveMode = serde_json::from_str(r#""newFile""#).unwrap();
         assert!(matches!(mode, SaveMode::NewFile));
@@ -232,6 +261,56 @@ mod tests {
         let p = out.get_pixel(20, 15).0;
         assert!(p[0] > 150 && p[2] < 120, "red half kept: {p:?}");
         assert_eq!(read_exif(&dest), (Some(1), Some("TestCam HEIC".into())));
+    }
+
+    #[test]
+    fn rotating_a_jpeg_is_lossless() {
+        let dir = temp_dir("edit-rotate");
+        let src = dir.join("IMG_3.jpg");
+        write_jpeg(&src, 400, 300, "TestCam X1", 1);
+        let before = std::fs::read(&src).unwrap();
+
+        // Two ops (left, then flip) are combined into one orientation change.
+        let ops = [
+            EditOp::Rotate(Rotate { quarter_turns: 3, flip: false }),
+            EditOp::Rotate(Rotate { quarter_turns: 0, flip: true }),
+        ];
+        let result = run_edit(src.clone(), &ops, SaveMode::NewFile).unwrap();
+        let dest = std::path::PathBuf::from(&result.entry.path);
+        assert_eq!(dest, dir.join("IMG_3 (edited).jpg"));
+        let after = std::fs::read(&dest).unwrap();
+        assert_eq!(after.len(), before.len(), "same file apart from the flag");
+        assert!(before.iter().zip(&after).filter(|(a, b)| a != b).count() <= 2);
+        // Rotate left, then mirror = EXIF 7 ("rotate 270° clockwise, then flip").
+        assert_eq!(lossless::tests::orientation_of(&after), 7);
+        assert_eq!(imaging::open_oriented(&dest).unwrap().image.width(), 300);
+    }
+
+    #[test]
+    fn rotate_with_other_edits_re_encodes() {
+        let dir = temp_dir("edit-rotate-crop");
+        let src = dir.join("IMG_4.jpg");
+        write_jpeg(&src, 400, 300, "TestCam X1", 6); // displays 300×400
+
+        // Rotating right makes it 400×300 again; the crop is in that space.
+        let ops = [
+            EditOp::Rotate(Rotate { quarter_turns: 1, flip: false }),
+            EditOp::Crop(Crop { x: 0, y: 0, width: 350, height: 300 }),
+        ];
+        let result = run_edit(src, &ops, SaveMode::NewFile).unwrap();
+        let dest = std::path::Path::new(&result.entry.path);
+        assert_eq!(image::image_dimensions(dest).unwrap(), (350, 300));
+        assert_eq!(read_exif(dest), (Some(1), Some("TestCam X1".into())));
+    }
+
+    #[test]
+    fn rotating_a_png_re_encodes() {
+        let dir = temp_dir("edit-rotate-png");
+        let src = dir.join("shot.png");
+        image::DynamicImage::new_rgba8(64, 32).save(&src).unwrap();
+        let ops = [EditOp::Rotate(Rotate { quarter_turns: 1, flip: false })];
+        let r = run_edit(src, &ops, SaveMode::NewFile).unwrap();
+        assert_eq!(image::image_dimensions(&r.entry.path).unwrap(), (32, 64));
     }
 
     #[test]

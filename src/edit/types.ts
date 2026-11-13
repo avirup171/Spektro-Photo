@@ -2,6 +2,9 @@
 // each EditOp variant here matches a variant of the Rust `EditOp` enum.
 import type { ImageEntry } from "../lib/api";
 
+/** Clockwise quarter turns (0–3), then an optional left↔right mirror. Rust: edit/rotate.rs. */
+export type RotateOp = { type: "rotate"; quarterTurns: number; flip: boolean };
+
 export type CropOp = { type: "crop"; x: number; y: number; width: number; height: number };
 
 /** Each slider is -100…100, 0 = unchanged. Rust: edit/adjust.rs. */
@@ -14,7 +17,7 @@ export type AdjustOp = {
 };
 
 /** Every operation the backend understands. Add new tools' ops to this union. */
-export type EditOp = CropOp | AdjustOp;
+export type EditOp = RotateOp | CropOp | AdjustOp;
 
 /** "newFile" keeps the original; "replace" moves the original to the Trash. */
 export type SaveMode = "newFile" | "replace";

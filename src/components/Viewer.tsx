@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type MouseEvent } from "react";
 import { fullSrc, thumbSrc, versionOf, type ImageEntry } from "../lib/api";
 import { useImageInfo } from "../lib/useImageInfo";
+import type { EditPreset } from "../edit/EditMode";
 import { InfoPanel } from "./InfoPanel";
 import {
   AdjustIcon,
   ChevronLeftIcon,
   CropIcon,
+  ExportIcon,
   ChevronRightIcon,
   ExitFullscreenIcon,
   FullscreenIcon,
@@ -34,8 +36,12 @@ type Props = {
   onTrash: (entry: ImageEntry) => void;
   onReveal: (path: string) => void;
   onCopyPath: (path: string) => void;
-  /** Open the editor on a tool ("crop", "adjust"); undefined when the image can't be edited (e.g. GIF). */
-  onEdit?: (tool: string) => void;
+  /**
+   * Open the editor on a tool ("crop", "adjust", "rotate"), optionally with
+   * starting states; undefined when the image can't be edited (e.g. GIF).
+   */
+  onEdit?: (tool: string, preset?: EditPreset) => void;
+  onExport: () => void;
   keysDisabled: boolean;
 };
 
@@ -286,6 +292,19 @@ export function Viewer(p: Props) {
           </button>
           <button className="icon-btn" onClick={() => rotate(90)} aria-label="Rotate 90°" title="Rotate view (R)">
             <RotateIcon />
+          </button>
+          {/* The view rotation is temporary; this keeps it (losslessly for JPEG) via the editor. */}
+          {rot !== 0 && p.onEdit && (
+            <button
+              className="btn small-btn"
+              onClick={() => p.onEdit!("rotate", { rotate: { quarterTurns: rot / 90, flip: false } })}
+              title="Open the editor with this rotation, to save it"
+            >
+              Save rotation…
+            </button>
+          )}
+          <button className="icon-btn" onClick={p.onExport} aria-label="Export" title="Export a resized copy (E)">
+            <ExportIcon />
           </button>
           <button
             className={"icon-btn" + (p.infoOpen ? " on" : "")}

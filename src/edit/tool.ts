@@ -2,18 +2,19 @@
 // cropping specifically; it renders whichever tools are in the registry
 // (tools/index.ts) and collects their operations when saving.
 //
-// Adding a tool (e.g. "rotate"):
-//   1. src/edit/tools/rotate/ with a `defineTool({...})` export
+// Adding a tool (e.g. "straighten"):
+//   1. src/edit/tools/<tool>/ with a `defineTool({...})` export
 //   2. add it to `tools` in tools/index.ts
 //   3. add its op to `EditOp` in types.ts and to the Rust `EditOp` enum
 import type { ComponentType, ReactNode } from "react";
 import type { ColorMatrix } from "./colorMatrix";
+import type { Box, Rotation } from "./orientation";
 import type { EditOp, Size } from "./types";
 
 export type ToolProps<S> = {
   state: S;
   setState: (next: S | ((prev: S) => S)) => void;
-  /** The image's displayed size in pixels (after EXIF rotation). */
+  /** The image's displayed size in pixels: after EXIF rotation and the rotate tool. */
   image: Size;
   /** Screen pixels per image pixel at the current fit. */
   scale: number;
@@ -45,6 +46,18 @@ export interface EditTool<S> {
    * adjusted colours. Must match what the Rust operation does.
    */
   colorMatrix?(state: S): ColorMatrix;
+  /**
+   * Geometry preview (the rotate tool). EditMode draws the image turned this way,
+   * and every tool gets the rotated size as `image`. Rust applies it first too.
+   */
+  rotation?(state: S): Rotation;
+  /**
+   * The rotation changed: move state that's in image pixels (the crop box) along.
+   * `move` takes a box in the old space to where the same pixels are now.
+   */
+  reorient?(state: S, move: (b: Box) => Box, swapped: boolean): S;
+  /** Size of the result when this change is applied to an image of `image` size (for Export). */
+  resultSize?(state: S, image: Size): Size;
   /** Keyboard handling while active. Return true if the key was used. */
   onKeyDown?(e: KeyboardEvent, props: ToolProps<S>): boolean;
 }
