@@ -3,13 +3,14 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { IMAGE_EXTS, isMac, openPath, trashImage, type Folder, type ImageEntry } from "./lib/api";
+import { formatBytes, IMAGE_EXTS, isMac, openPath, trashImage, type Exported, type Folder, type ImageEntry } from "./lib/api";
 import { addRecent, load, removeRecent, restoreRecent, save, type Recent } from "./lib/storage";
 import { Welcome } from "./components/Welcome";
 import { Library, THUMB_MAX, THUMB_MIN, type SortKey } from "./components/Library";
 import { Viewer } from "./components/Viewer";
 import { ShortcutsOverlay, Toast, type ToastState } from "./components/Overlays";
-import { EditMode } from "./edit/EditMode";
+import { ExportDialog } from "./components/ExportDialog";
+import { EditMode, type EditPreset } from "./edit/EditMode";
 import { canEdit, type EditResult } from "./edit/types";
 import "./App.css";
 
@@ -32,6 +33,10 @@ export default function App() {
   const [view, setView] = useState<"grid" | "viewer" | "edit">("grid");
   /** Which editor tool to open on ("crop" with C, "adjust" with A). */
   const [editTool, setEditTool] = useState("crop");
+  /** Starting tool states, e.g. the viewer's rotation for "Save rotation…". */
+  const [editPreset, setEditPreset] = useState<EditPreset | undefined>(undefined);
+  /** The image the Export dialog is open for (grid / viewer; the editor has its own). */
+  const [exportFor, setExportFor] = useState<ImageEntry | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<SortKey>(() => load("sort", "name"));
@@ -201,7 +206,7 @@ export default function App() {
   }, []);
 
   // ---- editing ---------------------------------------------------------------
-  function startEdit(entry: ImageEntry | undefined, tool: string) {
+  function startEdit(entry: ImageEntry | undefined, tool: string, preset?: EditPreset) {
     if (!entry) return;
     if (!canEdit(entry)) {
       showToast(`Only JPEG, PNG, WebP, BMP${isMac ? " and HEIC" : ""} images can be edited.`);
@@ -210,7 +215,14 @@ export default function App() {
     commitPending();
     setSelectedPath(entry.path);
     setEditTool(tool);
+    setEditPreset(preset);
     setView("edit");
+  }
+
+  function openExport(entry: ImageEntry | undefined) {
+    if (!entry) return;
+    commitPending();
+    setExportFor(entry);
   }
 
   const handleSaved = useCallback(
@@ -228,6 +240,28 @@ export default function App() {
       );
     },
     [showToast],
+  );
+
+  const revealLabel = isMac ? "Show in Finder" : "Show in Explorer";
+  const handleExported = useCallback(
+    (r: Exported) => {
+      setExportFor(null);
+      // Saved into the open folder: show it in the grid (or refresh it, if overwritten).
+      const entry = r.entry;
+      if (entry && folderDirRef.current && entry.path.slice(0, -entry.name.length - 1) === folderDirRef.current) {
+        setImages((list) =>
+          list.some((i) => i.path === entry.path) ? list.map((i) => (i.path === entry.path ? entry : i)) : [...list, entry],
+        );
+      }
+      showToast(`Exported ${r.name} · ${r.width} × ${r.height} · ${formatBytes(r.bytes)}`, 6000, {
+        label: revealLabel,
+        run: () => {
+          revealItemInDir(r.path).catch((e) => showToast(String(e)));
+          hideToast();
+        },
+      });
+    },
+    [showToast, hideToast, revealLabel],
   );
 
   // ---- window: drag & drop, full screen ----------------------------------
@@ -316,6 +350,7 @@ export default function App() {
       }
       return;
     }
+    if (exportFor) return; // ExportDialog handles its own keys
     // The editor handles its own keys (EditMode.tsx).
     if (view === "edit") return;
     if (mod && k.toLowerCase() === "o") {
@@ -392,6 +427,11 @@ export default function App() {
           e.preventDefault();
           startEdit(visible[i], "adjust");
           return;
+        case "e":
+        case "E":
+          e.preventDefault();
+          openExport(visible[i]);
+          return;
         default:
           return;
       }
@@ -436,6 +476,10 @@ export default function App() {
       case "A":
         startEdit(visible[i], "adjust");
         break;
+      case "e":
+      case "E":
+        openExport(visible[i]);
+        break;
       case "Backspace":
       case "Delete":
         requestTrash(visible[i]);
@@ -472,8 +516,10 @@ export default function App() {
         key={`${entry.path}|${entry.modified}`}
         entry={entry}
         initialTool={editTool}
+        preset={editPreset}
         onCancel={() => setView("viewer")}
         onSaved={handleSaved}
+        onExported={handleExported}
       />
     );
   } else if (view === "viewer" && selectedIndex >= 0) {
@@ -491,8 +537,11 @@ export default function App() {
         onTrash={requestTrash}
         onReveal={reveal}
         onCopyPath={copyPath}
-        onEdit={canEdit(visible[selectedIndex]) ? (tool) => startEdit(visible[selectedIndex], tool) : undefined}
-        keysDisabled={showShortcuts}
+        onEdit={
+          canEdit(visible[selectedIndex]) ? (tool, preset) => startEdit(visible[selectedIndex], tool, preset) : undefined
+        }
+        onExport={() => openExport(visible[selectedIndex])}
+        keysDisabled={showShortcuts || !!exportFor}
       />
     );
   } else {
@@ -529,6 +578,9 @@ export default function App() {
         </div>
       )}
       <Toast toast={toast} />
+      {exportFor && view !== "edit" && (
+        <ExportDialog entry={exportFor} ops={[]} onClose={() => setExportFor(null)} onExported={handleExported} />
+      )}
       {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
     </div>
   );

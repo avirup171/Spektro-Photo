@@ -6,6 +6,24 @@ All notable changes to Spektro Photo (formerly Image Viewer) are listed here. Th
 
 ## [Unreleased]
 
+### Added
+- **Rotate and flip** in the editor (<kbd>R</kbd>): rotate left / right, flip horizontal / vertical, with <kbd>←</kbd> <kbd>→</kbd> <kbd>H</kbd> <kbd>V</kbd>. Works together with crop and adjust in one save; a crop box stays on the same part of the photo when you rotate.
+  - **Lossless for JPEG:** a JPEG that's only rotated or flipped isn't re-compressed. Spektro Photo changes its EXIF orientation flag instead, so the image data stays byte-for-byte identical.
+  - In the viewer, after rotating the view with <kbd>R</kbd>, **Save rotation…** opens the editor with that rotation, ready to save.
+- **Export** (<kbd>E</kbd> in the grid, viewer and editor): save a resized or converted copy anywhere, through the system's Save dialog.
+  - Long edge: original, 3840, 2048, 1080 px or a custom size. Photos are never enlarged.
+  - JPEG (with a quality slider) or PNG. Transparent areas become white in a JPEG.
+  - Metadata: keep all, **remove location** (GPS is wiped; camera, lens and date stay), or remove all. The colour profile is always kept.
+  - From the editor, the export includes the current crop, rotation and colour changes. HEIC photos (macOS) export straight to JPEG.
+  - Your choices are remembered for next time. A toast offers *Show in Finder / Explorer* when done.
+
+### Developer
+- `edit/rotate.rs`: the `Rotate` op (clockwise quarter turns + optional mirror) and how two rotations combine, pinned against the image crate's 8 EXIF orientations. `src/edit/orientation.ts` mirrors it.
+- `edit/lossless.rs`: walks the JPEG's segments and patches (or adds) the EXIF orientation; falls back to re-encoding when that isn't safe (XMP orientation, EXIF without an orientation tag).
+- `tiff.rs`: small in-place EXIF edits (orientation, GPS removal) that never change the block's length.
+- `export.rs`: `export_image` command. Renders first, then opens the Save panel from Rust, so the destination path never comes from the webview.
+- Edit tools can now provide `rotation`, `reorient` and `resultSize` (see `src/edit/tool.ts`). `output.rs` gained `save_bytes` and `write_atomically`.
+
 ## [0.1.3] - 2026-11-07
 
 ### Changed

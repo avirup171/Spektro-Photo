@@ -21,6 +21,13 @@ export const cropTool = defineTool<CropState>({
     const r = roundRect(s.rect, image);
     return `${r.w} × ${r.h} px`;
   },
+  resultSize: (s, image) => {
+    const r = roundRect(s.rect, image);
+    return { width: r.w, height: r.h };
+  },
+  // Rotating keeps the box on the same part of the photo; a 3:2 box turned
+  // sideways becomes 2:3, so the preset's orientation follows.
+  reorient: (s, move, swapped) => ({ ...s, rect: move(s.rect), portrait: swapped ? !s.portrait : s.portrait }),
 
   Controls: CropControls,
   Overlay: CropOverlay,

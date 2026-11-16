@@ -1,11 +1,13 @@
 mod edit;
 mod error;
+mod export;
 mod heic;
 mod imaging;
 mod info;
 mod library;
 mod state;
 mod thumbs;
+mod tiff;
 
 use state::AppState;
 
@@ -29,6 +31,7 @@ pub fn run() {
             library::trash_image,
             info::image_info,
             edit::apply_edits,
+            export::export_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

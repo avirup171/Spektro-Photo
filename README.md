@@ -42,6 +42,8 @@ The full list of changes is in the [changelog](CHANGELOG.md).
 - **Info panel** with dimensions, file details and camera EXIF (camera, lens, focal length, aperture, shutter, ISO, date taken).
 - **Crop** with a draggable box, aspect presets (free, original, 1:1, 4:3, 3:2, 16:9, portrait or landscape), and keyboard nudging. Save the result as a new copy or replace the original. Camera data (EXIF) and colour profiles are kept, and a replaced original goes to the Trash.
 - **Adjust** temperature, brightness, contrast and saturation with sliders and a live preview that matches the saved file. Combine it with a crop in one save.
+- **Rotate and flip.** JPEGs that are only rotated are saved losslessly (only the orientation flag changes). Rotated the view in the viewer? *Save rotation…* keeps it.
+- **Export** a resized or converted copy (JPEG or PNG, long edge 1080 / 2048 / 3840 px or custom) anywhere you like, with the option to remove the photo's location or all metadata. From the editor, the export includes your edits.
 - **Safe delete:** Move to Trash with a 5-second Undo. Files are never deleted permanently.
 - **Keyboard-first:** everything has a shortcut (press <kbd>?</kbd> in the app).
 - Remembers window size, thumbnail size, sort order and recent folders.
@@ -70,7 +72,8 @@ Intel Macs aren't supported at the moment.
 | <kbd>0</kbd> / <kbd>1</kbd> | | Fit / 100% |
 | <kbd>C</kbd> | Crop | Crop |
 | <kbd>A</kbd> | Adjust colours | Adjust colours |
-| <kbd>R</kbd> | | Rotate (view only) |
+| <kbd>E</kbd> | Export a resized copy | Export a resized copy |
+| <kbd>R</kbd> / <kbd>Shift</kbd><kbd>R</kbd> | | Rotate the view (*Save rotation…* keeps it) |
 | <kbd>I</kbd> | | Toggle info panel |
 | <kbd>F</kbd> | | Full screen |
 | <kbd>⌫</kbd> | Move to Trash | Move to Trash |
@@ -80,7 +83,8 @@ Intel Macs aren't supported at the moment.
 | <kbd>⌘</kbd><kbd>O</kbd> | Open folder | Open folder |
 | <kbd>?</kbd> | Show shortcuts | Show shortcuts |
 
-In the editor: <kbd>C</kbd> / <kbd>A</kbd> switch between Crop and Adjust, <kbd>⌘</kbd><kbd>S</kbd> saves as a copy, <kbd>Esc</kbd> cancels.
+In the editor: <kbd>R</kbd> / <kbd>C</kbd> / <kbd>A</kbd> switch between Rotate, Crop and Adjust, <kbd>⌘</kbd><kbd>S</kbd> saves as a copy, <kbd>E</kbd> exports with your edits, <kbd>Esc</kbd> cancels.
+- **Rotate:** <kbd>←</kbd> <kbd>→</kbd> turn left / right, <kbd>H</kbd> / <kbd>V</kbd> flip horizontally / vertically.
 - **Crop:** drag the box or its handles (drag outside it to draw a new one), <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> to nudge it (<kbd>Shift</kbd> for 10 px).
 - **Adjust:** <kbd>Tab</kbd> between sliders, <kbd>←</kbd> <kbd>→</kbd> to change one (<kbd>Shift</kbd> for 10), double-click a slider to reset it.
 
@@ -151,18 +155,20 @@ invoke("apply_edits")    ── IPC ──▶  edit/        load → crop → ad
 - **Thumbnails** are decoded with the `image` crate, rotated according to EXIF orientation, resized to 560 px, and cached under the app's cache directory, keyed by path, size and modified time. A semaphore limits how many are decoded at once.
 - **Undo for Trash** works by waiting: the file disappears from the list immediately, and is only moved to the Trash after the 5-second Undo window closes.
 - **Editing** happens in Rust. The frontend only describes the edit as a list of operations, e.g. `[{ "type": "crop", "x": 120, "y": 80, "width": 1600, "height": 900 }]`, in the image's displayed pixel coordinates. Rust loads the original with its EXIF rotation applied, runs the operations, and re-encodes in the same format (JPEG at quality 92), keeping the colour profile and EXIF. The orientation flag is reset, because the pixels are already rotated. It always writes to a temporary file first. *Save as copy* then renames it to `name (edited).jpg`; *Replace* moves the original to the Trash and renames the temporary file into its place. Animated GIFs can't be edited, since saving would drop their frames.
+- **Rotation** is stored as "turn clockwise 0–3 quarter turns, then maybe mirror", which covers every mix of the four buttons and is exactly the set of 8 EXIF orientations. The editor draws the photo with a CSS transform and gives the other tools the rotated size, so the crop box is measured the way Rust crops (rotate first, then crop). When a JPEG is *only* rotated, Rust doesn't decode it at all: it rewrites the 2-byte EXIF orientation value (or adds a tiny EXIF block if there is none), so the compressed image is untouched (`edit/lossless.rs`). Anything else, or a file whose XMP also stores an orientation, goes through the normal re-encode.
+- **Export** (`export.rs`) loads the photo, applies the editor's operations, shrinks it with a Lanczos filter, and only then opens the native Save panel, from Rust. The destination comes from the OS, never from the webview. *Remove location* deletes the GPS entry from the EXIF and overwrites the coordinates with zeros, rather than just unlinking them (`tiff.rs`); if the EXIF can't be parsed, all of it is dropped to be safe.
 - **Colour adjustments** are each a small 3×4 *colour matrix* (scale and mix the R, G, B values, plus an offset). The matrices for temperature, brightness, contrast and saturation are multiplied into one, so Rust processes the image in a single pass (`edit/color.rs`, `edit/adjust.rs`). The frontend builds the same matrix (`src/edit/colorMatrix.ts`, `tools/adjust/adjustments.ts`) and draws the image through an SVG `<feColorMatrix>` filter, so the preview is instant and matches the saved pixels. A Rust test pins the numbers both sides must agree on.
 - **Cache busting:** after a replace, the path is unchanged, so image URLs carry `?v=<modified>-<size>` to make the webview load the new pixels.
 
 ### Adding an edit tool
 
-Edits are built as a pipeline, so a new tool (rotate, resize, brightness…) doesn't touch the editor itself:
+Edits are built as a pipeline, so a new tool (straighten, sharpen, vignette…) doesn't touch the editor itself:
 
 1. **Rust:** add `src-tauri/src/edit/<tool>.rs` with a struct for its parameters and `impl Operation for <Tool>`, then add a variant to the `EditOp` enum in `edit/mod.rs` and its arm in `EditOp::operation`.
 2. **TypeScript:** add the operation's type to `EditOp` in `src/edit/types.ts`.
 3. **UI:** create `src/edit/tools/<tool>/` exporting `defineTool({ id, label, shortcut, icon, init, isNoop, toOps, Controls?, Overlay?, Panel?, colorMatrix? })`, and add it to `src/edit/tools/index.ts`.
 
-The editor then shows the tool's tab, toolbar controls, overlay and side panel, and includes its operations when saving. Tools run in registry order, so put geometry tools (crop, rotate) before tools that change pixel values.
+The editor then shows the tool's tab, toolbar controls, overlay and side panel, and includes its operations when saving. Tools run in registry order, so put geometry tools (rotate, crop) before tools that change pixel values. A tool that turns the image returns a `rotation`; tools that store positions (crop) implement `reorient` so they follow it.
 
 A tool that changes colours can return a `colorMatrix` for an instant preview, applied whichever tool is active. To add another slider to Adjust (e.g. tint), add an entry to `ADJUSTMENTS` in `tools/adjust/adjustments.ts`, and a field, a matrix function and a line in `Adjust::matrix` in `edit/adjust.rs`.
 
@@ -177,7 +183,9 @@ src/                     React frontend
 │  ├─ tool.ts            the EditTool interface every tool implements
 │  ├─ types.ts           operation types shared with Rust
 │  ├─ colorMatrix.ts     colour matrices for the live preview (mirrors color.rs)
+│  ├─ orientation.ts     rotate / flip maths (mirrors rotate.rs)
 │  └─ tools/
+│     ├─ rotate/         rotate tool: buttons and keys
 │     ├─ crop/           crop tool: state, box overlay, aspect controls, geometry
 │     └─ adjust/         adjust tool: slider list + formulas, side panel
 └─ lib/                  typed command wrappers (api.ts), preferences, hooks
@@ -188,7 +196,9 @@ src-tauri/
 │  ├─ thumbs.rs          thumb:// and preview:// protocols, disk cache
 │  ├─ imaging.rs         shared loader: EXIF rotation, colour profile, EXIF
 │  ├─ heic/              HEIC / HEIF: mod.rs (shared), imageio.rs (macOS decoder)
-│  ├─ edit/              apply_edits: EditOp pipeline (mod.rs), crop.rs, adjust.rs + color.rs, output.rs (safe saving)
+│  ├─ edit/              apply_edits: EditOp pipeline (mod.rs), rotate.rs + lossless.rs, crop.rs, adjust.rs + color.rs, output.rs (safe saving)
+│  ├─ export.rs          export_image: resize / convert / metadata, native Save panel
+│  ├─ tiff.rs            in-place EXIF edits (orientation, GPS removal)
 │  ├─ info.rs            image_info (dimensions, EXIF)
 │  ├─ state.rs           allowed folders + thumbnail semaphore
 │  └─ error.rs           AppError, serialized to the frontend
@@ -220,7 +230,8 @@ The workflow needs these repository secrets for macOS signing: `APPLE_CERTIFICAT
 - [ ] Remember folder access across restarts, so recents show cover photos
 - [ ] Code-sign the Windows installer
 - [x] Brightness, contrast, saturation and temperature
-- [ ] More edit tools: rotate / flip, resize
+- [x] Rotate / flip (lossless for JPEG)
+- [x] Export: resize, convert, strip location
 - [x] HEIC / HEIF on macOS
 - [ ] Camera RAW support (Apple's ImageIO, used for HEIC, can also decode most RAW files on macOS)
 

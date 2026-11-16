@@ -14,9 +14,10 @@ editing, not a photo editor.
 - Stack: **Tauri 2** (Rust backend) + **React 19 + TypeScript + Vite** frontend, plain CSS.
 - Current version: **0.1.2** (Nov 2026: Adjust tool, i.e. temperature, brightness, contrast, saturation).
   Tags: `v0.1.0`, `v0.1.1` (crop), `v0.1.2` (adjust; tagged on `main` and pushed 2026-11-01).
-- Roadmap: rotate / flip, resize, live folder watching (`notify`), persisting folder access
+- Roadmap: live folder watching (`notify`), persisting folder access
   across restarts, Windows code signing, camera RAW (ImageIO on macOS could do it, like HEIC).
-- Unreleased on `dev`: HEIC / HEIF support on macOS (see "HEIC (macOS only)" below).
+- Unreleased: rotate / flip tool (lossless for rotate-only JPEGs) and Export (resize, JPEG/PNG,
+  metadata keep / no location / none). See "Rotation" and "Export" below.
 - Ideas not yet scheduled: hold-to-compare (show the original) in the editor; an Adjust
   screenshot for the README (`docs/screenshot-adjust.jpg`).
 
@@ -45,7 +46,7 @@ has caused this before.
 src/
   App.tsx                 app state machine: view = "grid" | "viewer" | "edit"; global keyboard; open / trash / edit flows
   App.css                 all styles; CSS variables at the top (dark theme, accent #5B9BFF)
-  components/             Welcome, Library (grid), Viewer, InfoPanel, Overlays (toast, shortcuts), Icons
+  components/             Welcome, Library (grid), Viewer, InfoPanel, Overlays (toast, shortcuts), Icons, ExportDialog
   lib/api.ts              ALL invoke() calls + types mirroring Rust; fullSrc/thumbSrc URL builders
   lib/storage.ts          localStorage prefs (try/catch-wrapped)
   lib/useImageInfo.ts     dimensions + EXIF hook (debounced, versioned)
@@ -55,6 +56,8 @@ src/
     types.ts              EditOp union, SaveMode, EditResult, canEdit()
     tools/index.ts        tool registry (order = toolbar order = op order)
     colorMatrix.ts        3×4 colour matrices: compose, toSvgValues (mirrors edit/color.rs)
+    orientation.ts        Rotation {quarterTurns, flip}: after/inverse/rotateBox/cssTransform (mirrors edit/rotate.rs)
+    tools/rotate/         index.tsx (tool, ← → H V keys), RotateControls.tsx, steps.ts
     tools/crop/           cropState.ts, cropMath.ts (pure geometry), CropOverlay.tsx, CropControls.tsx, index.tsx
     tools/adjust/         adjustments.ts (slider list + formulas, mirrors edit/adjust.rs), AdjustPanel.tsx, index.tsx
 src-tauri/src/
@@ -66,10 +69,14 @@ src-tauri/src/
   heic/imageio.rs         macOS only: ImageIO decode (rotated upright, colour profile kept) via objc2 crates
   info.rs                 image_info: dimensions + EXIF fields
   edit/mod.rs             Operation trait, EditOp enum, apply_ops, run_edit, apply_edits command
+  edit/rotate.rs          Rotate operation (quarter turns + mirror), ⇄ EXIF Orientation, composition (`after`)
+  edit/lossless.rs        rotate-only JPEG: patch / insert the EXIF orientation, no re-encode
   edit/crop.rs            Crop operation
   edit/adjust.rs          Adjust operation: temperature, brightness, contrast, saturation → one colour matrix
   edit/color.rs           ColorMatrix, compose, apply (8/16-bit/float, alpha untouched, grey → RGB)
-  edit/output.rs          safe saving: temp file → rename; Replace = trash original then rename
+  edit/output.rs          safe saving: temp file → rename; Replace = trash original then rename; save_bytes, write_atomically, encode_with
+  export.rs               export_image: render (ops, resize, metadata) → Rust-side Save panel → write
+  tiff.rs                 in-place EXIF edits: orientation get/set, minimal block, strip_gps (never changes length)
   state.rs                AppState: allowed folders + thumbnail semaphore
   error.rs                AppError (serialized to the frontend as a string)
 .github/workflows/release.yml   tag-triggered release build (macOS arm64 + Windows)
@@ -96,14 +103,16 @@ src-tauri/src/
 - **Keyboard:** one window listener per component, using the "ref to latest handler" pattern.
   In `view === "edit"`, App ignores keys and EditMode handles its own.
   Keys in use (grid / viewer): arrows, Enter, Space, Esc, ⌫/Delete, `+ − 0 1`, `C` crop, `A` adjust,
-  `R` rotate view, `I` info, `F` full screen, `?`, ⌘O, ⌘F, ⌘Z. On a focused recent folder (sidebar or
+  `E` export, `R` / `Shift+R` rotate view, `I` info, `F` full screen, `?`, ⌘O, ⌘F, ⌘Z. On a focused recent folder (sidebar or
   welcome screen), ⌫/Delete removes it from the list: `components/recentKeys.ts` stops the event so App's
-  window listener doesn't also trash the selected image. Editor: `C` / `A` switch tool,
-  arrows (crop nudge, or the focused slider), ⌘S save copy, Esc cancel. Check this list before adding one.
-- **Opening the editor on a tool:** `startEdit(entry, toolId)` in App.tsx stores `editTool` and passes it
-  as `EditMode`'s `initialTool`; the viewer's `onEdit(toolId)` buttons use the same path.
+  window listener doesn't also trash the selected image. Editor: `R` / `C` / `A` switch tool,
+  arrows (rotate: turn; crop: nudge; adjust: focused slider), `H` / `V` flip (rotate tool), `E` export,
+  ⌘S save copy, Esc cancel. While an Export dialog is open, App and EditMode ignore keys. Check this list before adding one.
+- **Opening the editor on a tool:** `startEdit(entry, toolId, preset?)` in App.tsx stores `editTool` (and
+  optional starting tool states, `EditPreset`) and passes them to `EditMode`; the viewer's `onEdit` buttons use
+  the same path. "Save rotation…" passes `{ rotate: { quarterTurns, flip: false } }`.
 
-### Adding an edit tool (e.g. rotate)
+### Adding an edit tool (e.g. straighten)
 1. Rust: `src-tauri/src/edit/<tool>.rs` with a params struct + `impl Operation`; add an
    `EditOp` variant and its arm in `EditOp::operation` (the compiler enforces the arm).
 2. TS: add the op to the `EditOp` union in `src/edit/types.ts`.
@@ -111,7 +120,37 @@ src-tauri/src/
    then add it to `src/edit/tools/index.ts`.
 4. Add Rust tests (see `imaging::test_support` for fixtures), and update the shortcuts sheet, README and CHANGELOG.
 
-Known limits: ops run in registry order (geometry tools first).
+Known limits: ops run in registry order (geometry tools first: rotate, then crop).
+
+### Rotation
+- One representation everywhere: `{ quarterTurns: 0–3 clockwise, flip }` = rotate, then mirror left↔right.
+  These are exactly the 8 EXIF orientations (`Rotate::to_orientation`). `after(next, before)` composes;
+  the Rust tests check it against the image crate for all 64 pairs.
+- EditMode: `natural` = loaded size; `image` (what tools get) = `rotatedSize(natural, rotation)`. The `<img>`
+  keeps its natural size and is turned with `cssTransform` around the canvas centre. When the rotation
+  changes, `followRotation` calls each tool's `reorient(state, move, swapped)` (crop moves its box and
+  toggles `portrait`). Tools with `rotation` are initialised first (also from a preset).
+- Lossless path (`run_edit`): if every op is a Rotate and the file isn't HEIC, `lossless::reorient_jpeg`
+  patches the EXIF Orientation (composing with the existing one) or inserts a minimal EXIF APP1 after
+  JFIF. It returns None (→ normal re-encode) for non-JPEG, EXIF without an Orientation tag, XMP that has
+  `tiff:Orientation`, or a malformed file. The file keeps its EXIF untouched otherwise, including the
+  embedded thumbnail (viewers rotate it with the same flag).
+- Test fixture gotcha: `test_support::exif_chunk` has a deliberately dangling IFD1 pointer, which kamadak-exif
+  rejects. Normal saves zero it (`clean_exif`), the lossless path doesn't, so lossless tests read the
+  orientation with the image crate's decoder (`lossless::tests::orientation_of`).
+
+### Export
+- `export_image(path, ops, options)`: `render` (open_oriented → apply_ops → Lanczos3 shrink to `maxEdge`,
+  never enlarge → flatten alpha on white for JPEG → metadata) happens *before* the Save panel, so errors show
+  early and the suggested name has the real size ("IMG_1 (2048px).jpg"). The panel is opened from Rust
+  (`blocking_save_file` on the spawn_blocking thread, parented to the window), so the destination never
+  comes from the webview. `Ok(None)` = cancelled; the dialog then stays open.
+- Metadata: keep / noLocation (`tiff::strip_gps`: removes the IFD0 entry, zeroes the GPS IFD and its values;
+  if the block can't be parsed, all EXIF is dropped) / none. ICC is always kept. XMP/IPTC never survive
+  (the image crate doesn't write them).
+- The result's `entry` is set when the file landed in an opened folder; App adds it to the grid if it's the
+  current folder. Options are remembered in localStorage (`exportOptions`).
+- `ExportDialog`'s size preview uses the same rounding as `image::DynamicImage::resize`.
 
 ### Colour adjustments and the preview
 - Preview = each tool's optional `colorMatrix(state)`, composed by `EditMode` and drawn with one SVG

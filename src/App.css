@@ -381,3 +381,24 @@ select {
 .modal.confirm p { line-height: 1.5; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .shortcuts-heading { margin: 18px 0 4px 8px; }
+
+/* ---- rotate tool & export dialog ------------------------------------------ */
+.rotate-controls .icon-btn { width: 36px; }
+
+.modal.export-dialog { max-width: 560px; display: flex; flex-direction: column; gap: 16px; }
+.export-dialog .modal-head { margin-bottom: 0; }
+.export-dialog .modal-head h2 { min-width: 0; }
+.export-note { margin: -8px 0 0; }
+.export-field { display: grid; grid-template-columns: 84px 1fr; gap: 12px; align-items: start; }
+.export-label { font-size: 13px; color: var(--text-2); line-height: 34px; }
+.export-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
+.export-control > .small { flex-basis: 100%; }
+.export-custom { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
+.export-custom input {
+  width: 88px; height: 32px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--border-strong);
+  background: #16171a; font-variant-numeric: tabular-nums; user-select: text; -webkit-user-select: text;
+}
+.export-custom input[aria-invalid="true"] { border-color: #8a4a4a; }
+.export-quality { flex-wrap: nowrap; }
+.export-quality input[type="range"] { flex: 1; height: 32px; margin: 0; accent-color: var(--accent); }
+.export-quality output { min-width: 3ch; text-align: right; color: var(--text-2); }

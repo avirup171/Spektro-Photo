@@ -1,6 +1,19 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { applyEdits, fullSrc, isHeic, modKey, type ImageEntry } from "../lib/api";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { ExportDialog } from "../components/ExportDialog";
+import { applyEdits, fullSrc, isHeic, modKey, type Exported, type ImageEntry } from "../lib/api";
 import { compose, IDENTITY, isIdentity, toSvgValues, type ColorMatrix } from "./colorMatrix";
+import {
+  after,
+  cssTransform,
+  inverse,
+  isUpright,
+  rotateBox,
+  rotatedSize,
+  sameRotation,
+  swapsSides,
+  UPRIGHT,
+  type Rotation,
+} from "./orientation";
 import type { ToolProps } from "./tool";
 import { tools } from "./tools";
 import type { EditResult, SaveMode, Size } from "./types";
@@ -9,23 +22,33 @@ const PAD = 40; // space around the image inside the stage
 const MAX_SCALE = 4; // tiny images are enlarged, but not absurdly
 const PREVIEW_FILTER = "edit-preview"; // id of the SVG filter below; one editor at a time
 
+/** Starting states for some tools, by tool id, e.g. the viewer's rotation. */
+export type EditPreset = Record<string, unknown>;
+
 type Props = {
   entry: ImageEntry;
   /** Tool to start with, e.g. "adjust" when opened with A. Defaults to the first. */
   initialTool?: string;
+  preset?: EditPreset;
   onCancel: () => void;
   onSaved: (result: EditResult) => void;
+  onExported: (result: Exported) => void;
 };
+
+/** The combined rotation of every tool that rotates (just the rotate tool today). */
+const rotationOf = (states: Record<string, unknown>): Rotation =>
+  tools.reduce<Rotation>((r, t) => (t.rotation && t.id in states ? after(t.rotation(states[t.id]), r) : r), UPRIGHT);
 
 /**
  * Full-window editor. Generic over tools: it lays out the image, renders the
  * active tool's controls and overlay, and on save sends every tool's
  * operations to Rust in registry order.
  */
-export function EditMode({ entry, initialTool, onCancel, onSaved }: Props) {
+export function EditMode({ entry, initialTool, preset, onCancel, onSaved, onExported }: Props) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [stage, setStage] = useState({ w: 0, h: 0 });
-  const [image, setImage] = useState<Size | null>(null);
+  /** The photo as loaded (EXIF rotation applied), before the rotate tool. */
+  const [natural, setNatural] = useState<Size | null>(null);
   const [failed, setFailed] = useState(false);
   const [activeId, setActiveId] = useState(() =>
     tools.some((t) => t.id === initialTool) ? initialTool! : tools[0].id,
@@ -34,6 +57,7 @@ export function EditMode({ entry, initialTool, onCancel, onSaved }: Props) {
   const [busy, setBusy] = useState<SaveMode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useLayoutEffect(() => {
     const el = stageRef.current;
@@ -43,7 +67,18 @@ export function EditMode({ entry, initialTool, onCancel, onSaved }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  const initAll = (size: Size) => Object.fromEntries(tools.map((t) => [t.id, t.init(size)]));
+  // Rotating tools start first, so the others start in the rotated space.
+  const initAll = (size: Size, start?: EditPreset) => {
+    const all: Record<string, unknown> = {};
+    for (const t of tools) if (t.rotation) all[t.id] = start?.[t.id] ?? t.init(size);
+    const turned = rotatedSize(size, rotationOf(all));
+    for (const t of tools) if (!t.rotation) all[t.id] = start?.[t.id] ?? t.init(turned);
+    return all;
+  };
+
+  // What every tool sees as "the image": the photo after the rotate tool.
+  const rotation = rotationOf(states);
+  const image = natural && rotatedSize(natural, rotation);
 
   const scale = image
     ? Math.max(0.01, Math.min((stage.w - 2 * PAD) / image.width, (stage.h - 2 * PAD) / image.height, MAX_SCALE))
@@ -52,13 +87,27 @@ export function EditMode({ entry, initialTool, onCancel, onSaved }: Props) {
   const propsFor = (id: string): ToolProps<unknown> => ({
     state: states[id],
     setState: (next) =>
-      setStates((all) => ({
-        ...all,
-        [id]: typeof next === "function" ? (next as (prev: unknown) => unknown)(all[id]) : next,
-      })),
+      setStates((all) => {
+        const updated = {
+          ...all,
+          [id]: typeof next === "function" ? (next as (prev: unknown) => unknown)(all[id]) : next,
+        };
+        return natural ? followRotation(all, updated, natural) : updated;
+      }),
     image: image!,
     scale,
   });
+
+  /** When the rotation changes, carry position-based state (the crop box) along with the photo. */
+  function followRotation(before: Record<string, unknown>, now: Record<string, unknown>, size: Size) {
+    const [from, to] = [rotationOf(before), rotationOf(now)];
+    if (sameRotation(from, to)) return now;
+    const step = after(to, inverse(from)); // the turn just made
+    const old = rotatedSize(size, from);
+    const move = (b: Parameters<typeof rotateBox>[0]) => rotateBox(b, step, old);
+    for (const t of tools) if (t.reorient) now[t.id] = t.reorient(now[t.id], move, swapsSides(step));
+    return now;
+  }
 
   const ready = image !== null && tools.every((t) => t.id in states);
   const changedTools = ready ? tools.filter((t) => !t.isNoop(states[t.id], image)) : [];
@@ -75,9 +124,15 @@ export function EditMode({ entry, initialTool, onCancel, onSaved }: Props) {
     : IDENTITY;
   const previewOn = !isIdentity(preview);
 
+  // Everything the editor would save, in order. Empty when nothing changed.
+  const ops = ready ? changedTools.flatMap((t) => t.toOps(states[t.id], image)) : [];
+  // Final size after every change, shown in the Export dialog.
+  const resultSize = ready
+    ? changedTools.reduce<Size>((size, t) => (t.resultSize ? t.resultSize(states[t.id], size) : size), natural!)
+    : null;
+
   async function save(mode: SaveMode) {
     if (!ready || !changed || busy) return;
-    const ops = changedTools.flatMap((t) => t.toOps(states[t.id], image));
     setBusy(mode);
     setError(null);
     try {
@@ -92,7 +147,7 @@ export function EditMode({ entry, initialTool, onCancel, onSaved }: Props) {
   // ---- keyboard: one listener, always calling this render's handler ----
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
   keyRef.current = (e) => {
-    if (busy) return;
+    if (busy || exporting) return; // the Export dialog handles its own keys
     if (confirmReplace) {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -112,6 +167,11 @@ export function EditMode({ entry, initialTool, onCancel, onSaved }: Props) {
       return;
     }
     if (mod || e.altKey || !ready) return;
+    if (e.key.toLowerCase() === "e") {
+      e.preventDefault();
+      setExporting(true);
+      return;
+    }
     const tool = tools.find((t) => t.shortcut === e.key.toLowerCase());
     if (tool) {
       setActiveId(tool.id);
@@ -134,6 +194,20 @@ export function EditMode({ entry, initialTool, onCancel, onSaved }: Props) {
         top: (stage.h - image.height * scale) / 2,
       }
     : null;
+  // The <img> keeps its unrotated size and is turned with CSS around the
+  // canvas centre, so it exactly fills the (rotated) canvas.
+  const imgStyle: CSSProperties = {};
+  if (previewOn) imgStyle.filter = `url(#${PREVIEW_FILTER})`;
+  if (natural && canvas && !isUpright(rotation)) {
+    Object.assign(imgStyle, {
+      position: "absolute",
+      width: natural.width * scale,
+      height: natural.height * scale,
+      left: (canvas.width - natural.width * scale) / 2,
+      top: (canvas.height - natural.height * scale) / 2,
+      transform: cssTransform(rotation),
+    });
+  }
   const { Controls, Overlay, Panel } = active;
 
   return (
@@ -175,11 +249,11 @@ export function EditMode({ entry, initialTool, onCancel, onSaved }: Props) {
               src={fullSrc(entry)}
               alt={entry.name}
               draggable={false}
-              style={previewOn ? { filter: `url(#${PREVIEW_FILTER})` } : undefined}
+              style={imgStyle}
               onLoad={(e) => {
                 const size = { width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight };
-                setImage(size);
-                setStates(initAll(size));
+                setNatural(size);
+                setStates(initAll(size, preset));
               }}
               onError={() => setFailed(true)}
             />
@@ -199,8 +273,16 @@ export function EditMode({ entry, initialTool, onCancel, onSaved }: Props) {
           </span>
         )}
         <div className="spacer" />
-        <button className="btn" onClick={() => image && setStates(initAll(image))} disabled={!changed || !!busy}>
+        <button className="btn" onClick={() => natural && setStates(initAll(natural))} disabled={!changed || !!busy}>
           Reset
+        </button>
+        <button
+          className="btn"
+          onClick={() => setExporting(true)}
+          disabled={!ready || !!busy}
+          title="Export a resized or converted copy, with these edits (E)"
+        >
+          Export…
         </button>
         <button
           className="btn"
@@ -215,6 +297,20 @@ export function EditMode({ entry, initialTool, onCancel, onSaved }: Props) {
           <kbd className="on-accent">{modKey}S</kbd>
         </button>
       </div>
+
+      {exporting && ready && (
+        <ExportDialog
+          entry={entry}
+          ops={ops}
+          size={resultSize}
+          withEdits={changed}
+          onClose={() => setExporting(false)}
+          onExported={(r) => {
+            setExporting(false);
+            onExported(r);
+          }}
+        />
+      )}
 
       {confirmReplace && (
         <div className="modal-backdrop" onClick={() => !busy && setConfirmReplace(false)}>

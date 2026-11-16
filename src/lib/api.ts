@@ -41,6 +41,34 @@ export const getImageInfo = (path: string) => invoke<ImageInfo>("image_info", { 
 export const applyEdits = (path: string, ops: EditOp[], mode: SaveMode) =>
   invoke<EditResult>("apply_edits", { path, ops, mode });
 
+/** Mirrors `ExportOptions` in export.rs. */
+export type ExportOptions = {
+  format: "jpeg" | "png";
+  /** JPEG only, 30–100. */
+  quality: number;
+  /** Longest side in px; null keeps the size. Never enlarges. */
+  maxEdge: number | null;
+  /** The colour profile is always kept. */
+  metadata: "keep" | "noLocation" | "none";
+};
+
+export type Exported = {
+  path: string;
+  name: string;
+  width: number;
+  height: number;
+  bytes: number;
+  /** Set when it was saved into a folder that's open, so the grid can show it. */
+  entry: ImageEntry | null;
+};
+
+/**
+ * Applies `ops` (the editor's, or none), resizes / converts, then Rust opens the
+ * native Save panel. Resolves to null if the user cancels it.
+ */
+export const exportImage = (path: string, ops: EditOp[], options: ExportOptions) =>
+  invoke<Exported | null>("export_image", { path, ops, options });
+
 /**
  * Changes whenever the file does. Added to image URLs as `?v=…` so the webview
  * reloads a file that was replaced in place (Tauri ignores the query string).

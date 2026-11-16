@@ -60,6 +60,35 @@ export const RotateIcon = (p: P) => (
     <path d="M20 4v5h-5" />
   </Icon>
 );
+/** RotateIcon mirrored: anticlockwise. */
+export const RotateLeftIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M4 12a8 8 0 1 0 3-6.2" />
+    <path d="M4 4v5h5" />
+  </Icon>
+);
+/** Two halves facing each other across a vertical axis. */
+export const FlipHorizontalIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M12 3v18" strokeDasharray="2 2.5" />
+    <path d="M9 6L3 18h6z" />
+    <path d="M15 6l6 12h-6z" />
+  </Icon>
+);
+export const FlipVerticalIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M3 12h18" strokeDasharray="2 2.5" />
+    <path d="M6 9L18 3v6z" />
+    <path d="M6 15l12 6v-6z" />
+  </Icon>
+);
+/** Arrow leaving a tray: export / share. */
+export const ExportIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M12 15V3M7 8l5-5 5 5" />
+    <path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" />
+  </Icon>
+);
 export const InfoIcon = (p: P) => (
   <Icon {...p}>
     <circle cx="12" cy="12" r="9" />
