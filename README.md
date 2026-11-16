@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="../../releases/latest"><b>Download the latest release</b></a>
-  &nbsp;·&nbsp; Current version: 0.1.3 &nbsp;·&nbsp;
+  &nbsp;·&nbsp; Current version: 0.1.4 &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
@@ -18,13 +18,12 @@
 
 ![Viewer with the info panel open](docs/screenshot-viewer.jpg)
 
-## What's new in 0.1.3
+## What's new in 0.1.4
 
-**Image Viewer is now called Spektro Photo.** Same app, new name. Your settings, recent folders and thumbnails carry over.
-On a Mac, delete the old *Image Viewer* app after installing. On Windows the `.msi` upgrades in place; if you use the `-setup.exe`, uninstall *Image Viewer* from Settings → Apps.
+- **Rotate and flip** in the editor (press <kbd>R</kbd>): turn left / right with <kbd>←</kbd> <kbd>→</kbd>, flip with <kbd>H</kbd> / <kbd>V</kbd>. Rotate, crop and adjust in one save. **JPEGs that are only rotated are saved losslessly**: just the orientation flag changes, the image data stays identical. Rotated the view in the viewer? *Save rotation…* keeps it.
+- **Export** (press <kbd>E</kbd> in the grid, viewer or editor): save a resized or converted copy anywhere through the system Save dialog. Long edge 1080 / 2048 / 3840 px or custom (never enlarged), JPEG with a quality slider or PNG, and keep all metadata, **remove just the location**, or remove all. From the editor, the export includes your edits; HEIC photos export straight to JPEG.
 
-- **HEIC / HEIF photos on macOS** (iPhone photos): browse, view, zoom, read camera details, crop and adjust. They're decoded in Rust with Apple's ImageIO, so rotation and wide-gamut colour are kept. Edits are saved as a JPEG copy; *Replace original* isn't available for HEIC.
-- **Remove a folder from the recent list** with the × that appears on hover, or focus it and press <kbd>⌫</kbd>. Only the list entry goes, never the folder, and Undo puts it back.
+0.1.3 renamed the app from Image Viewer to Spektro Photo and added HEIC / HEIF photos on macOS and removing folders from the recent list.
 
 Colour adjustments (temperature, brightness, contrast, saturation, press <kbd>A</kbd>) arrived in 0.1.2.
 

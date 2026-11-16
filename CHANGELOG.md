@@ -6,6 +6,8 @@ All notable changes to Spektro Photo (formerly Image Viewer) are listed here. Th
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-16
+
 ### Added
 - **Rotate and flip** in the editor (<kbd>R</kbd>): rotate left / right, flip horizontal / vertical, with <kbd>←</kbd> <kbd>→</kbd> <kbd>H</kbd> <kbd>V</kbd>. Works together with crop and adjust in one save; a crop box stays on the same part of the photo when you rotate.
   - **Lossless for JPEG:** a JPEG that's only rotated or flipped isn't re-compressed. Spektro Photo changes its EXIF orientation flag instead, so the image data stays byte-for-byte identical.
@@ -99,7 +101,8 @@ First release.
 - Remembers window size, thumbnail size, sort order and recent folders.
 - Installers for macOS (Apple Silicon, `.dmg`) and Windows (`.msi` and `-setup.exe`), built by GitHub Actions.
 
-[Unreleased]: https://github.com/avirup171/spektro-photo/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/avirup171/spektro-photo/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/avirup171/spektro-photo/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/avirup171/spektro-photo/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/avirup171/spektro-photo/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/avirup171/spektro-photo/compare/v0.1.0...v0.1.1
