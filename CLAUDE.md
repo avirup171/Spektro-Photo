@@ -12,12 +12,12 @@ explain *why* when changing things, and keep the app simple. It's a viewer with 
 editing, not a photo editor.
 
 - Stack: **Tauri 2** (Rust backend) + **React 19 + TypeScript + Vite** frontend, plain CSS.
-- Current version: **0.1.2** (Nov 2026: Adjust tool, i.e. temperature, brightness, contrast, saturation).
-  Tags: `v0.1.0`, `v0.1.1` (crop), `v0.1.2` (adjust; tagged on `main` and pushed 2026-11-01).
+- Current version: **0.1.4** (Nov 2026: rotate / flip, lossless for rotate-only JPEGs; Export with resize,
+  JPEG/PNG and metadata keep / no location / none). See "Rotation" and "Export" below.
+  Tags: `v0.1.0`, `v0.1.1` (crop), `v0.1.2` (adjust), `v0.1.3` (HEIC on macOS, rename to Spektro Photo);
+  `v0.1.4` not tagged yet (version bumped on `dev` 2026-11-16).
 - Roadmap: live folder watching (`notify`), persisting folder access
   across restarts, Windows code signing, camera RAW (ImageIO on macOS could do it, like HEIC).
-- Unreleased: rotate / flip tool (lossless for rotate-only JPEGs) and Export (resize, JPEG/PNG,
-  metadata keep / no location / none). See "Rotation" and "Export" below.
 - Ideas not yet scheduled: hold-to-compare (show the original) in the editor; an Adjust
   screenshot for the README (`docs/screenshot-adjust.jpg`).
 
