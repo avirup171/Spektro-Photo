@@ -61,7 +61,7 @@ pub fn handle<R: Runtime>(ctx: UriSchemeContext<'_, R>, req: Request<Vec<u8>>, r
     serve(ctx, req, responder, Kind::Thumb);
 }
 
-/// The `preview://` scheme (full size). Same checks, permits and cache as thumbnails.
+/// The `preview://` scheme (full size). Same checks and cache as thumbnails, its own permits.
 pub fn handle_preview<R: Runtime>(ctx: UriSchemeContext<'_, R>, req: Request<Vec<u8>>, responder: UriSchemeResponder) {
     serve(ctx, req, responder, Kind::Preview);
 }
@@ -82,7 +82,11 @@ fn serve<R: Runtime>(
             Err(e) => error_response(StatusCode::FORBIDDEN, &e.to_string()),
             Ok(src) => {
                 // Wait for a free slot, then decode on the blocking pool.
-                let _permit = state.thumb_permits.clone().acquire_owned().await;
+                let permits = match kind {
+                    Kind::Thumb => &state.thumb_permits,
+                    Kind::Preview => &state.preview_permits,
+                };
+                let _permit = permits.clone().acquire_owned().await;
                 let cache_dir = app
                     .path()
                     .app_cache_dir()

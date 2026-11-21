@@ -6,6 +6,17 @@ All notable changes to Spektro Photo (formerly Image Viewer) are listed here. Th
 
 ## [Unreleased]
 
+### Changed
+- **Large photos open instantly.** The viewer shows the photo's thumbnail right away, at full window size, and swaps in the full-resolution image once it's ready, with a *Loading full size…* indicator in between. Flicking through with <kbd>←</kbd> <kbd>→</kbd> no longer shows empty frames, and big JPEGs no longer freeze the window for a moment when they first appear.
+- **Smoother scrolling** in big folders: thumbnails far off screen aren't drawn, and a fast scroll no longer queues a thumbnail for every photo it passes, so the ones you stop on appear first.
+- Smoother zoom: fast trackpad scrolling and pinching no longer drop steps, and the buttons, <kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd> <kbd>1</kbd>, double-click and rotate glide instead of jumping.
+- **Animations and transitions**: the grid, viewer and editor fade in, the info panel slides in, dialogs and buttons respond softly, thumbnails fade in as they load, and keyboard selection scrolls the grid smoothly. With *Reduce motion* turned on in your system settings, everything appears instantly.
+
+### Developer
+- `Viewer.tsx`: placeholder (thumb://) → size from the full image's header (polled per frame) → `img.decode()` → crossfade. Wheel and drag updates are coalesced to one per animation frame; `zoomTo` works from the latest state.
+- `Library.tsx`: `useNearViewport` (one shared IntersectionObserver, 90 ms dwell) replaces `loading="lazy"`; tiles use `content-visibility: auto` with a computed `--tile-h`.
+- `thumbs.rs` / `state.rs`: `preview://` has its own permits, so a HEIC opened in the viewer never waits behind grid thumbnails; thumbnail decodes leave two cores free for the UI.
+
 ## [0.1.4] - 2026-11-16
 
 ### Added

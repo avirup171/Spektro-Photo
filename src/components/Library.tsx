@@ -1,4 +1,13 @@
-import { memo, useEffect, useState, type RefObject } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import { thumbSrc, formatBytes, modKey, versionOf, type Folder, type ImageEntry } from "../lib/api";
 import type { Recent } from "../lib/storage";
 import { useImageInfo } from "../lib/useImageInfo";
@@ -8,6 +17,12 @@ import { removeOnDelete } from "./recentKeys";
 export type SortKey = "name" | "date" | "size";
 export const THUMB_MIN = 96;
 export const THUMB_MAX = 280;
+/** Matches `.grid`'s column gap in App.css. */
+const COL_GAP = 10;
+/** A tile asks for its thumbnail only after it has been near the screen this long. */
+const DWELL_MS = 90;
+/** Thumbnails this session has already shown: they skip the wait and the fade. */
+const loadedThumbs = new Set<string>();
 
 type Props = {
   folder: Folder;
@@ -36,12 +51,36 @@ export function Library(p: Props) {
   // Debounced so holding an arrow key doesn't fire a request per tile.
   const info = useImageInfo(selected?.path, 150, selected ? versionOf(selected) : "");
 
-  // Keep the selected tile on screen when moving with the keyboard.
+  // Keep the selected tile on screen when moving with the keyboard: glide to
+  // it, except on the first render (e.g. back from the viewer), where it jumps
+  // straight there and centres it.
+  const firstScroll = useRef(true);
   useEffect(() => {
+    const first = firstScroll.current;
+    firstScroll.current = false;
     if (!p.selectedPath || !p.gridRef.current) return;
     const el = p.gridRef.current.querySelector(`[data-path="${CSS.escape(p.selectedPath)}"]`);
-    el?.scrollIntoView({ block: "nearest" });
+    const glide = !first && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el?.scrollIntoView(first ? { block: "center" } : { block: "nearest", behavior: glide ? "smooth" : "auto" });
   }, [p.selectedPath, p.gridRef]);
+
+  // Tile height, for `content-visibility: auto` (App.css): tiles far off screen
+  // aren't laid out or painted, and this is the size they reserve meanwhile.
+  // Mirrors the grid's `repeat(auto-fill, minmax(thumbSize, 1fr))` columns.
+  const scrollRef = useRef<HTMLElement>(null);
+  const [scrollW, setScrollW] = useState(0);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setScrollW(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const cols = Math.max(1, Math.floor((scrollW + COL_GAP) / (p.thumbSize + COL_GAP)));
+  const tileW = scrollW > 0 ? (scrollW - COL_GAP * (cols - 1)) / cols : p.thumbSize;
+  const tileH = Math.round(tileW + 6 + 15); // square image, 6px gap, one line of 12px text
+
+  const watch = useNearViewport(scrollRef);
 
   return (
     <div className="library">
@@ -122,7 +161,7 @@ export function Library(p: Props) {
           </button>
         </aside>
 
-        <main className="grid-scroll">
+        <main className="grid-scroll" ref={scrollRef}>
           {p.total === 0 ? (
             <EmptyState title="No images in this folder" hint="Supported: JPEG, PNG, GIF, WebP, BMP" />
           ) : p.visible.length === 0 ? (
@@ -131,7 +170,12 @@ export function Library(p: Props) {
             <div
               ref={p.gridRef}
               className="grid"
-              style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${p.thumbSize}px, 1fr))` }}
+              style={
+                {
+                  gridTemplateColumns: `repeat(auto-fill, minmax(${p.thumbSize}px, 1fr))`,
+                  "--tile-h": `${tileH}px`,
+                } as CSSProperties
+              }
             >
               {p.visible.map((img) => (
                 <Tile
@@ -141,6 +185,7 @@ export function Library(p: Props) {
                   selected={img.path === p.selectedPath}
                   onSelect={p.onSelect}
                   onOpen={p.onOpen}
+                  watch={watch}
                 />
               ))}
             </div>
@@ -179,19 +224,92 @@ function EmptyState({ title, hint }: { title: string; hint: string }) {
   );
 }
 
+/** Calls `onNear` once `el` has stayed near the visible area for DWELL_MS; returns a cleanup. */
+type Watch = (el: Element, onNear: () => void) => () => void;
+
+/**
+ * One IntersectionObserver shared by every tile. Thumbnails are made in Rust
+ * and a request can't be cancelled once it's queued, so with plain
+ * `loading="lazy"` a fast scroll through 2,000 photos queued a decode for every
+ * tile it passed, and the ones you stopped on waited at the back. Now a tile
+ * only asks once it has been near the screen for a moment.
+ */
+function useNearViewport(rootRef: RefObject<HTMLElement | null>): Watch {
+  const observer = useRef<IntersectionObserver | null>(null);
+  const waiting = useRef(new Map<Element, { onNear: () => void; timer: number }>());
+
+  useEffect(
+    () => () => {
+      observer.current?.disconnect();
+      observer.current = null;
+      for (const w of waiting.current.values()) window.clearTimeout(w.timer);
+    },
+    [],
+  );
+
+  return useCallback(
+    (el, onNear) => {
+      const pending = waiting.current;
+      // Created on first use: tiles' effects run before this component's, but
+      // the scroll container's ref is already set by then.
+      if (!observer.current) {
+        observer.current = new IntersectionObserver(
+          (entries) => {
+            for (const e of entries) {
+              const w = pending.get(e.target);
+              if (!w) continue;
+              window.clearTimeout(w.timer);
+              if (!e.isIntersecting) continue;
+              w.timer = window.setTimeout(() => {
+                pending.delete(e.target);
+                observer.current?.unobserve(e.target);
+                w.onNear();
+              }, DWELL_MS);
+            }
+          },
+          // "Near" = on screen or within ~2 rows below/above, so thumbnails are
+          // usually ready by the time a slow scroll reaches them.
+          { root: rootRef.current, rootMargin: "400px 0px" },
+        );
+      }
+      pending.set(el, { onNear, timer: 0 });
+      observer.current.observe(el);
+      return () => {
+        const w = pending.get(el);
+        if (w) window.clearTimeout(w.timer);
+        pending.delete(el);
+        observer.current?.unobserve(el);
+      };
+    },
+    [rootRef],
+  );
+}
+
 type TileProps = {
   entry: ImageEntry;
   selected: boolean;
   onSelect: (path: string) => void;
   onOpen: (path: string) => void;
+  watch: Watch;
 };
 
 // memo: with hundreds of tiles, only the two whose `selected` changed re-render
 // when you press an arrow key (needs stable onSelect/onOpen from App).
-const Tile = memo(function Tile({ entry, selected, onSelect, onOpen }: TileProps) {
-  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
+const Tile = memo(function Tile({ entry, selected, onSelect, onOpen, watch }: TileProps) {
+  const src = thumbSrc(entry);
+  const seen = loadedThumbs.has(src);
+  const ref = useRef<HTMLButtonElement>(null);
+  const [near, setNear] = useState(seen);
+  const [state, setState] = useState<"loading" | "ok" | "error">(seen ? "ok" : "loading");
+
+  useEffect(() => {
+    if (near || !ref.current) return;
+    return watch(ref.current, () => setNear(true));
+  }, [near, watch]);
+
   return (
     <button
+      ref={ref}
       className={"tile" + (selected ? " selected" : "")}
       data-path={entry.path}
       // Roving tabindex: Tab lands on the selected tile, not on every tile.
@@ -202,16 +320,20 @@ const Tile = memo(function Tile({ entry, selected, onSelect, onOpen }: TileProps
       onDoubleClick={() => onOpen(entry.path)}
     >
       <span className="tile-img" data-state={state}>
-        {/* loading="lazy": only tiles near the viewport request a thumbnail */}
-        <img
-          src={thumbSrc(entry)}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          draggable={false}
-          onLoad={() => setState("ok")}
-          onError={() => setState("error")}
-        />
+        {/* Only tiles that stayed near the screen request a thumbnail (useNearViewport). */}
+        {near && (
+          <img
+            src={src}
+            alt=""
+            decoding="async"
+            draggable={false}
+            onLoad={() => {
+              loadedThumbs.add(src);
+              setState("ok");
+            }}
+            onError={() => setState("error")}
+          />
+        )}
         {state === "loading" && <span className="spinner" aria-hidden="true" />}
         {state === "error" && <span className="tile-broken">Can’t preview</span>}
       </span>

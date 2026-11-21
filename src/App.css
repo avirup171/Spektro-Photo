@@ -15,6 +15,10 @@
   --accent-soft: rgba(91, 155, 255, 0.14);
   --danger: #f08c8c;
   --radius: 10px;
+  /* Motion: quick and quiet. One easing curve for everything that moves. */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --fast: 0.12s;
+  --medium: 0.22s;
   color-scheme: dark;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   font-size: 14px;
@@ -62,6 +66,12 @@ kbd.ghost { border: none; padding: 0; color: var(--muted); }
   display: inline-flex; align-items: center; justify-content: center; gap: 10px;
   font-weight: 500;
 }
+/* Hover and press feedback eases in rather than snapping. */
+.btn, .icon-btn, .side-item, .recent, .zoom-label, .toast-action, .segmented button, select, .search {
+  transition: background-color var(--fast) ease-out, color var(--fast) ease-out,
+    border-color var(--fast) ease-out, opacity var(--fast) ease-out, transform var(--fast) ease-out;
+}
+.btn:active:not(:disabled), .icon-btn:active:not(:disabled) { transform: scale(0.96); }
 .btn:hover { background: #2c3036; }
 .btn.primary { height: 44px; background: var(--accent); border-color: transparent; color: #0b1220; font-weight: 600; }
 .btn.primary:hover { background: #7aaeff; }
@@ -78,14 +88,21 @@ kbd.ghost { border: none; padding: 0; color: var(--muted); }
 .divider { width: 1px; height: 20px; background: var(--border-strong); margin: 0 4px; }
 
 /* ---- spinner -------------------------------------------------------------- */
+/* Spinners fade in after a short delay, so loads that finish quickly (the
+   usual case) never flash one. */
 .spinner {
-  width: 18px; height: 18px; border-radius: 50%;
+  width: 18px; height: 18px; border-radius: 50%; flex: 0 0 auto;
   border: 2px solid #3a3e45; border-top-color: var(--muted);
-  animation: spin 0.9s linear infinite;
+  animation: spin 0.9s linear infinite, appear 0.2s ease-out 0.3s backwards;
 }
-.spinner.big { width: 28px; height: 28px; position: absolute; left: 50%; top: 50%; margin: -14px 0 0 -14px; }
+.spinner.big {
+  width: 32px; height: 32px; position: absolute; left: 50%; top: 50%; margin: -16px 0 0 -16px;
+  border-width: 3px; border-color: #2e3137; border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite, appear 0.2s ease-out 0.15s backwards;
+}
+.spinner.small { width: 14px; height: 14px; border-top-color: var(--accent); animation-delay: 0s, 0s; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+@keyframes appear { from { opacity: 0; } }
 
 /* ---- welcome -------------------------------------------------------------- */
 .welcome { flex: 1; display: flex; align-items: center; justify-content: center; padding: 32px 16px; overflow-y: auto; }
@@ -134,6 +151,12 @@ select {
 .sq { width: 16px; height: 16px; border: 2px solid var(--muted); border-radius: 3px; }
 .sq.small-sq { width: 11px; height: 11px; }
 
+/* ---- screens: a short fade when switching grid / viewer / editor ---------- */
+.library, .welcome, .editor { animation: screen-in var(--medium) var(--ease); }
+.viewer { animation: screen-zoom-in var(--medium) var(--ease); }
+@keyframes screen-in { from { opacity: 0; } }
+@keyframes screen-zoom-in { from { opacity: 0; transform: scale(0.985); } }
+
 /* ---- library -------------------------------------------------------------- */
 .library { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .library-body { flex: 1; min-height: 0; display: flex; }
@@ -159,6 +182,7 @@ select {
   position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
   width: 32px; height: 32px; border-radius: 7px; border: none; background: transparent;
   color: var(--muted); display: inline-flex; align-items: center; justify-content: center; opacity: 0;
+  transition: opacity var(--fast) ease-out, background-color var(--fast) ease-out;
 }
 .recent-row .remove-x { right: 10px; }
 .side-row:hover .remove-x, .side-row:focus-within .remove-x,
@@ -166,20 +190,34 @@ select {
 .remove-x:hover { background: #30333a; color: var(--text); }
 @media (max-width: 760px) { .sidebar { display: none; } .hide-narrow { display: none; } }
 
-.grid-scroll { flex: 1; min-width: 0; overflow-y: auto; padding: 20px; }
+.grid-scroll { flex: 1; min-width: 0; overflow-y: auto; padding: 20px; overscroll-behavior: contain; }
 .grid { display: grid; gap: 14px 10px; }
+/* content-visibility: tiles far off screen skip layout and painting, which keeps
+   scrolling smooth in big folders. --tile-h (set in Library.tsx) is the space
+   they reserve until drawn. It also clips painting to the tile, so the 4px
+   padding (cancelled by the -4px margin) leaves room for the selection ring. */
 .tile {
-  display: flex; flex-direction: column; gap: 6px; padding: 0; border: none;
+  display: flex; flex-direction: column; gap: 6px; padding: 4px; margin: -4px; border: none;
   background: transparent; text-align: left; min-width: 0;
+  content-visibility: auto; contain-intrinsic-size: auto var(--tile-h, 220px);
 }
 .tile-img {
   position: relative; width: 100%; aspect-ratio: 1; border-radius: 8px; overflow: hidden;
   background: #202227; display: flex; align-items: center; justify-content: center;
+  transition: box-shadow var(--fast) ease-out;
 }
-.tile-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.2s; }
-.tile-img[data-state="ok"] img { opacity: 1; }
+.tile-img img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  opacity: 0; transform: scale(1.03); transition: opacity 0.25s ease-out, transform 0.35s var(--ease);
+}
+.tile-img[data-state="ok"] img { opacity: 1; transform: none; }
 .tile-broken { font-size: 11px; color: var(--muted); padding: 8px; text-align: center; }
-.tile:hover .tile-img { filter: brightness(1.08); }
+/* Hover: a light overlay (cheaper to draw than a filter on the photo). */
+.tile-img::after {
+  content: ""; position: absolute; inset: 0; background: rgba(255, 255, 255, 0.07);
+  opacity: 0; transition: opacity var(--fast) ease-out; pointer-events: none;
+}
+.tile:hover .tile-img::after { opacity: 1; }
 .tile.selected .tile-img { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
 .tile-name { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile.selected .tile-name { color: var(--text); }
@@ -207,6 +245,27 @@ select {
 .stage.pannable { cursor: grab; }
 .stage.pannable:active { cursor: grabbing; }
 .stage-img { position: absolute; left: 50%; top: 50%; max-width: none; max-height: none; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5); }
+/* Loading: the thumbnail (placeholder) shows at once; the full image sits on
+   top, transparent until decoded, then fades in (or appears at once if it was
+   quick, e.g. already cached). */
+.stage-img.placeholder { animation: appear var(--fast) ease-out; }
+.stage-img.full { opacity: 0; }
+.stage-img.full.ready { opacity: 1; }
+.stage-img.fade { transition: opacity 0.25s ease-out; }
+/* Zoom / rotate from buttons and keys glide; wheel, pinch and drag stay direct. */
+.stage.smooth .stage-img {
+  transition: width var(--medium) var(--ease), height var(--medium) var(--ease), transform var(--medium) var(--ease);
+}
+.stage.smooth .stage-img.fade {
+  transition: width var(--medium) var(--ease), height var(--medium) var(--ease), transform var(--medium) var(--ease),
+    opacity 0.25s ease-out;
+}
+.stage-loading {
+  position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-radius: 16px; background: rgba(30, 32, 36, 0.88); border: 1px solid #2e3137;
+  font-size: 12px; color: var(--text-2); white-space: nowrap; pointer-events: none;
+  animation: appear 0.2s ease-out 0.25s backwards;
+}
 .stage-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 .nav-btn {
   position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 48px; border-radius: 24px;
@@ -219,11 +278,14 @@ select {
 .hint-pill {
   position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); padding: 6px 12px; border-radius: 16px;
   background: rgba(30, 32, 36, 0.9); font-size: 12px; color: var(--text-2); white-space: nowrap; pointer-events: none;
+  animation: appear var(--medium) ease-out 0.3s backwards;
 }
 .navigator {
   position: absolute; right: 16px; bottom: 16px; border-radius: 6px; overflow: hidden;
   border: 1px solid var(--border-strong); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); pointer-events: none;
+  animation: pop-in var(--medium) var(--ease);
 }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.94); } }
 .navigator img { width: 100%; height: 100%; display: block; }
 .navigator-rect { position: absolute; border: 2px solid var(--accent); border-radius: 2px; background: rgba(255, 255, 255, 0.08); }
 
@@ -233,7 +295,8 @@ select {
 }
 .film {
   flex: 0 0 auto; width: 48px; height: 48px; padding: 0; border: none; border-radius: 6px; overflow: hidden;
-  background: #202227; opacity: 0.55; transition: opacity 0.15s;
+  background: #202227; opacity: 0.55;
+  transition: opacity var(--fast) ease-out, width var(--fast) var(--ease), height var(--fast) var(--ease), box-shadow var(--fast) ease-out;
 }
 .film:hover { opacity: 0.85; }
 .film.current { width: 60px; height: 60px; opacity: 1; box-shadow: 0 0 0 2px var(--bg-viewer), 0 0 0 4px var(--accent); }
@@ -243,7 +306,9 @@ select {
 .info-panel {
   width: 320px; flex: 0 0 320px; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 22px;
   background: #17181b; border-left: 1px solid #22252a;
+  animation: panel-in var(--medium) var(--ease);
 }
+@keyframes panel-in { from { opacity: 0; transform: translateX(16px); } }
 .info-head { display: flex; flex-direction: column; gap: 4px; }
 .info-head h2 { font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
 .info-group { display: flex; flex-direction: column; gap: 10px; }
@@ -275,11 +340,16 @@ select {
   color: var(--accent); font-size: 20px; font-weight: 600; pointer-events: none;
 }
 
-.modal-backdrop { position: absolute; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal-backdrop {
+  position: absolute; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; padding: 16px;
+  animation: appear var(--fast) ease-out;
+}
 .modal {
   width: 100%; max-width: 560px; max-height: 100%; overflow-y: auto; padding: 20px 24px; border-radius: 14px;
   background: #1e2024; border: 1px solid var(--border-strong); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  animation: modal-in var(--medium) var(--ease);
 }
+@keyframes modal-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .modal-head h2 { font-size: 16px; font-weight: 600; }
 .shortcuts { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -402,3 +472,16 @@ select {
 .export-quality { flex-wrap: nowrap; }
 .export-quality input[type="range"] { flex: 1; height: 32px; margin: 0; accent-color: var(--accent); }
 .export-quality output { min-width: 3ch; text-align: right; color: var(--text-2); }
+
+/* ---- reduced motion --------------------------------------------------------
+   With "Reduce motion" on (System Settings → Accessibility), things appear
+   instantly. Spinners keep turning, slowly, so loading still reads as loading. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+    animation-delay: 0s !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important;
+  }
+  .spinner, .spinner.big, .spinner.small {
+    animation-duration: 3s, 0.01ms !important; animation-iteration-count: infinite, 1 !important;
+  }
+}
