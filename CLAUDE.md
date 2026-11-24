@@ -112,6 +112,24 @@ src-tauri/src/
   optional starting tool states, `EditPreset`) and passes them to `EditMode`; the viewer's `onEdit` buttons use
   the same path. "Save rotation…" passes `{ rotate: { quarterTurns, flip: false } }`.
 
+### Viewer loading and grid performance
+- Viewer: the thumb:// image is a placeholder laid out at the final size (`placeholderSize`: a thumb under
+  560 px *is* the original size; otherwise only its aspect ratio is used). The full `<img>` is transparent
+  until `img.decode()` resolves, then fades in (instantly if ready within `INSTANT_MS`); its `naturalWidth`
+  is polled per frame so zoom works before it finishes. The placeholder is removed after the fade (`settled`).
+- Viewer input: wheel deltas and drag moves are applied once per animation frame; `zoomTo` takes a
+  function of the current zoom so every event counts. `anim` turns on CSS transitions (`.stage.smooth`)
+  for buttons / keys / rotate only, never for wheel or drag. `rotation` isn't normalised for the transform,
+  so the turn animates the short way.
+- Neighbour prefetch waits 200 ms (holding an arrow key doesn't load every photo passed) and decodes.
+- Grid: tiles request their thumbnail via `useNearViewport` (shared IntersectionObserver, 400 px margin,
+  90 ms dwell) because queued thumb:// decodes can't be cancelled. `loadedThumbs` lets tiles shown before
+  skip the wait. Tiles have `content-visibility: auto`; that clips painting to the tile, hence the
+  `padding: 4px; margin: -4px` that keeps room for the selection ring, and `--tile-h` (computed in
+  Library.tsx from the column maths) is the size off-screen tiles reserve.
+- Motion tokens (`--ease`, `--fast`, `--medium`) are at the top of App.css; the reduced-motion block at the
+  end turns everything instant except spinners.
+
 ### Adding an edit tool (e.g. straighten)
 1. Rust: `src-tauri/src/edit/<tool>.rs` with a params struct + `impl Operation`; add an
    `EditOp` variant and its arm in `EditOp::operation` (the compiler enforces the arm).

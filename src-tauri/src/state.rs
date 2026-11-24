@@ -14,8 +14,12 @@ pub struct AppState {
     /// Tauri's asset protocol enforces with its scope.
     allowed_dirs: Mutex<HashSet<PathBuf>>,
     /// Caps concurrent thumbnail decodes so a 2,000-image folder doesn't spawn
-    /// 2,000 blocking threads at once.
+    /// 2,000 blocking threads at once. Two cores are left free so the webview
+    /// (scrolling, decoding the photo on screen) never has to fight for CPU.
     pub thumb_permits: Arc<Semaphore>,
+    /// Separate permits for full-size `preview://` images (HEIC in the viewer),
+    /// so the photo you opened never waits behind a queue of grid thumbnails.
+    pub preview_permits: Arc<Semaphore>,
 }
 
 impl AppState {
@@ -23,7 +27,8 @@ impl AppState {
         let cpus = std::thread::available_parallelism().map_or(4, |n| n.get());
         Self {
             allowed_dirs: Mutex::new(HashSet::new()),
-            thumb_permits: Arc::new(Semaphore::new(cpus.max(2))),
+            thumb_permits: Arc::new(Semaphore::new(cpus.saturating_sub(2).max(2))),
+            preview_permits: Arc::new(Semaphore::new(2)),
         }
     }
 
